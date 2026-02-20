@@ -1,21 +1,29 @@
 {
   "name": "readerby",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "description": "Real-time system telemetry and resource usage tracking",
+  "main": "server.js",
   "scripts": {
     "dev": "vite",
     "server": "nodemon server.js",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "tunnel:frontend": "lt --port 5173",
-    "tunnel:backend": "lt --port 3001",
+    "tunnel": "lt --port 3001",
     "start": "node server.js",
     "start:prod": "NODE_ENV=production node server.js",
-    "deploy": "npm run build && NODE_ENV=production node server.js"
+    "deploy": "npm run build && NODE_ENV=production node server.js",
+    "dev:full": "concurrently \"npm run server\" \"npm run dev\"",
+    "docker:build": "docker build -t readerby .",
+    "docker:run": "docker run -p 3001:3001 readerby"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "dependencies": {
+    "@netlify/neon": "^0.1.2",
     "cors": "^2.8.5",
     "express": "^5.2.1",
     "framer-motion": "^12.25.0",
@@ -34,6 +42,7 @@
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
+    "concurrently": "^9.2.1",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",

@@ -8,9 +8,18 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import { neon } from '@netlify/neon';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Server configuration
+const PORT = process.env.PORT || 3001;
+
+// Global variables
+let isSpeedTesting = false;
+let lastInternetSpeed = 0;
+let addresses = [];
 
 const app = express();
 
@@ -62,6 +71,95 @@ app.get('/api/files', async (req, res) => {
     }
 });
 
+// Database API for storing and retrieving data
+app.get('/api/posts', async (req, res) => {
+    if (!sql) {
+        return res.status(501).json({ error: 'Database feature not available' });
+    }
+    try {
+        const posts = await sql`SELECT * FROM posts ORDER BY created_at DESC`;
+        res.json(posts);
+    } catch (e) {
+        console.error('Error fetching posts:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/posts', async (req, res) => {
+    if (!sql) {
+        return res.status(501).json({ error: 'Database feature not available' });
+    }
+    try {
+        const { title, content } = req.body;
+        const [post] = await sql`
+            INSERT INTO posts (title, content)
+            VALUES (${title}, ${content})
+            RETURNING *
+        `;
+        res.json(post);
+    } catch (e) {
+        console.error('Error creating post:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/posts/:id', async (req, res) => {
+    if (!sql) {
+        return res.status(501).json({ error: 'Database feature not available' });
+    }
+    try {
+        const postId = req.params.id;
+        const [post] = await sql`SELECT * FROM posts WHERE id = ${postId}`;
+        if (!post) {
+            return res.status(404).json({ error: 'Post not found' });
+        }
+        res.json(post);
+    } catch (e) {
+        console.error('Error fetching post:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.put('/api/posts/:id', async (req, res) => {
+    if (!sql) {
+        return res.status(501).json({ error: 'Database feature not available' });
+    }
+    try {
+        const postId = req.params.id;
+        const { title, content } = req.body;
+        const [post] = await sql`
+            UPDATE posts 
+            SET title = ${title}, content = ${content}
+            WHERE id = ${postId}
+            RETURNING *
+        `;
+        if (!post) {
+            return res.status(404).json({ error: 'Post not found' });
+        }
+        res.json(post);
+    } catch (e) {
+        console.error('Error updating post:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.delete('/api/posts/:id', async (req, res) => {
+    if (!sql) {
+        return res.status(501).json({ error: 'Database feature not available' });
+    }
+    try {
+        const postId = req.params.id;
+        const [post] = await sql`DELETE FROM posts WHERE id = ${postId} RETURNING *`;
+        if (!post) {
+            return res.status(404).json({ error: 'Post not found' });
+        }
+        res.json({ message: 'Post deleted successfully' });
+    } catch (e) {
+        console.error('Error deleting post:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.get('/api/file-content', async (req, res) => {
     try {
         const filePath = req.query.path;
@@ -91,10 +189,98 @@ app.get('/api/file-content', async (req, res) => {
     }
 });
 
-const PORT = 3001;
-let lastInternetSpeed = 0;
-let isSpeedTesting = false;
-let addresses = []; // Store detected network IPs to share with frontend
+// Database initialization route
+app.get('/api/init-db', async (req, res) => {
+    if (!sql) {
+        return res.status(501).json({ error: 'Database feature not available' });
+    }
+    try {
+        await sql`
+            CREATE TABLE IF NOT EXISTS posts (
+                id SERIAL PRIMARY KEY,
+                title VARCHAR(255) NOT NULL,
+                content TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `;
+
+        await sql`
+            CREATE TABLE IF NOT EXISTS configurations (
+                id SERIAL PRIMARY KEY,
+                cpu_model VARCHAR(255) NOT NULL,
+                cpu_cores INT,
+                cpu_threads INT,
+                cpu_speed FLOAT,
+                gpu_model VARCHAR(255) NOT NULL,
+                gpu_vendor VARCHAR(255),
+                gpu_vram INT,
+                memory_total BIGINT,
+                performance_score INT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `;
+
+        res.json({ message: 'Database initialized successfully' });
+    } catch (e) {
+        console.error('Error initializing database:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/configurations', async (req, res) => {
+    if (!sql) {
+        return res.status(501).json({ error: 'Database feature not available' });
+    }
+    try {
+        const { cpu, gpu, memory, performanceScore } = req.body;
+        const [configuration] = await sql`
+            INSERT INTO configurations (
+                cpu_model, cpu_cores, cpu_threads, cpu_speed,
+                gpu_model, gpu_vendor, gpu_vram,
+                memory_total, performance_score
+            ) VALUES (
+                ${cpu.model}, ${cpu.cores}, ${cpu.threads}, ${cpu.speed},
+                ${gpu.model}, ${gpu.vendor}, ${gpu.vram},
+                ${memory.total}, ${performanceScore}
+            )
+            RETURNING *
+        `;
+        res.json(configuration);
+    } catch (e) {
+        console.error('Error creating configuration:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/configurations', async (req, res) => {
+    if (!sql) {
+        return res.status(501).json({ error: 'Database feature not available' });
+    }
+    try {
+        const configurations = await sql`
+            SELECT * FROM configurations 
+            ORDER BY created_at DESC
+            LIMIT 100
+        `;
+        res.json(configurations);
+    } catch (e) {
+        console.error('Error fetching configurations:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Database client initialization - make optional for local development
+let sql;
+try {
+    sql = neon(); // automatically uses env NETLIFY_DATABASE_URL
+} catch (error) {
+    console.warn('Database connection not available. Database API endpoints will be disabled.');
+    console.warn('To use database features:');
+    console.warn('1. Run with netlify dev');
+    console.warn('2. Or set NETLIFY_DATABASE_URL environment variable');
+    sql = null;
+}
 
 const runSpeedTest = async () => {
     if (isSpeedTesting) return;
@@ -136,7 +322,7 @@ io.on('connection', (socket) => {
 
     const emitStats = async () => {
         try {
-            const [mem, networkStats, cpu, system, osInfo, temp, disk, battery] = await Promise.all([
+            const [mem, networkStats, cpu, system, osInfo, temp, disk, battery, cpuSpeed, cpuInfo, graphics] = await Promise.all([
                 si.mem(),
                 si.networkStats(),
                 si.currentLoad(),
@@ -144,7 +330,10 @@ io.on('connection', (socket) => {
                 si.osInfo(),
                 si.cpuTemperature(),
                 si.fsSize(),
-                si.battery()
+                si.battery(),
+                si.cpuCurrentSpeed(),
+                si.cpu(),
+                si.graphics()
             ]);
 
             const stats = {
@@ -171,7 +360,26 @@ io.on('connection', (socket) => {
                 cpu: {
                     currentLoad: cpu.currentLoad || 0,
                     temp: temp.main || (38 + (cpu.currentLoad || 0) * 0.45),
-                    fans: [1150 + (cpu.currentLoad || 0) * 20]
+                    fans: [1150 + (cpu.currentLoad || 0) * 20],
+                    model: cpuInfo.brand,
+                    cores: cpuInfo.physicalCores,
+                    threads: cpuInfo.cores,
+                    speed: cpuSpeed.avg
+                },
+                gpu: {
+                    model: graphics.controllers[0]?.model || 'Unknown',
+                    vendor: graphics.controllers[0]?.vendor || 'Unknown',
+                    vram: graphics.controllers[0]?.vram || 0,
+                    vramDynamic: graphics.controllers[0]?.vramDynamic || false,
+                    bus: graphics.controllers[0]?.bus || 'Unknown',
+                    cores: graphics.controllers[0]?.cores, // may be undefined
+                    temperatureGpu: graphics.controllers[0]?.temperatureGpu,
+                    displays: graphics.displays.map(d => ({
+                        model: d.model,
+                        resolutionx: d.resolutionX,
+                        resolutiony: d.resolutionY,
+                        refreshRate: d.currentResX ? d.currentRefreshRate : null
+                    }))
                 },
                 disk: disk.map(d => ({
                     fs: d.fs,
@@ -201,6 +409,11 @@ io.on('connection', (socket) => {
     });
 });
 
+// Health check for troubleshooting
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', mode: isProduction ? 'production' : 'development' });
+});
+
 // Catch-all route for SPA - must be after API routes
 // In production, serve index.html for all non-API routes
 if (isProduction) {
@@ -210,10 +423,10 @@ if (isProduction) {
     });
 }
 
-// Health check for troubleshooting
-app.get('/health', (req, res) => {
-    res.json({ status: 'ok', mode: isProduction ? 'production' : 'development' });
-});
+// Health check for troubleshooting - DEPRECATED, moved above catch-all route
+// app.get('/health', (req, res) => {
+//     res.json({ status: 'ok', mode: isProduction ? 'production' : 'development' });
+// });
 
 // Bind to all network interfaces (0.0.0.0) to allow access from any device on any network
 httpServer.listen(PORT, '0.0.0.0', () => {

@@ -35,6 +35,8 @@ import { useWindowSize } from 'react-use';
 import { collectClientStats } from './utils/clientStats';
 
 // Hosts that only serve static files and cannot run the Node.js backend
+// Note: Tunnel hosts (loca.lt, ngrok.io, trycloudflare.com) are NOT included here
+// because they can forward to the production server which serves both frontend and backend
 const STATIC_ONLY_HOSTS = [
   'netlify.app',
   'netlify.com',
@@ -44,14 +46,24 @@ const STATIC_ONLY_HOSTS = [
   'pages.dev',
   'web.app',
   'firebaseapp.com',
-  'surge.sh',
-  'loca.lt',
-  'ngrok.io',
-  'trycloudflare.com'
+  'surge.sh'
 ];
 
 function isStaticOnlyHost(hostname) {
   return STATIC_ONLY_HOSTS.some(h => hostname === h || hostname.endsWith('.' + h));
+}
+
+// Tunnel hosts that forward to a single port (frontend + backend on same server)
+const TUNNEL_HOSTS = [
+  'loca.lt',
+  'ngrok.io',
+  'trycloudflare.com',
+  'ngrok-free.app',
+  'ngrok.app'
+];
+
+function isTunnelHost(hostname) {
+  return TUNNEL_HOSTS.some(h => hostname === h || hostname.endsWith('.' + h));
 }
 
 // Resolve backend URL: config.json (runtime) > env (build time) > auto-detect
@@ -60,14 +72,26 @@ const getBackendUrlFallback = () => {
     return import.meta.env.VITE_SERVER_URL;
   }
   const { protocol, hostname, port } = window.location;
+
   // On static-only hosts (Netlify, Vercel, etc.) do NOT guess backend URL
   if (isStaticOnlyHost(hostname)) {
     return null;
   }
-  if (port === '5173' || port === '4173') {
+
+  // On tunnel hosts accessing production server, backend is at same URL (same port)
+  // Production server serves both frontend and backend on port 3001
+  if (isTunnelHost(hostname)) {
+    // The tunnel forwards to the production server which handles both
+    return `${protocol}//${hostname}`;
+  }
+
+  // Development mode: frontend on 517x/4173, backend on 3001
+  if (port.startsWith('517') || port === '4173') {
     return `${protocol}//${hostname}:3001`;
   }
-  return `${protocol}//${hostname}:3001`;
+
+  // Production mode: same server serves both (port 3001 or any custom port)
+  return `${protocol}//${hostname}${port ? ':' + port : ''}`;
 };
 
 function urlHostname(urlStr) {
@@ -90,7 +114,8 @@ async function resolveBackendUrl() {
         const configHost = urlHostname(url);
         const currentHost = window.location.hostname;
         // If config points at same host (e.g. Netlify URL with :3001), treat as no backend and use browser mode
-        if (configHost && (configHost === currentHost || isStaticOnlyHost(configHost))) {
+        // Exception: tunnel hosts can serve both frontend and backend on same URL
+        if (configHost && (configHost === currentHost || isStaticOnlyHost(configHost)) && !isTunnelHost(configHost)) {
           console.log('🔌 Backend URL is same/static host, using browser mode');
           return null;
         }
@@ -152,7 +177,30 @@ const translations = {
     remoteDesc: "Access this dashboard from any device on your network:",
     modalTitle: "System Synchronization",
     modalBody: "To enable real-time telemetry and resource reading across your network, please authorize data stream synchronization.",
-    modalBtn: "Launch Dashboard"
+    modalBtn: "Launch Dashboard",
+    // New Interface
+    gamePerformanceTitle: "Game Performance",
+    gameSettingsLabel: "Settings:",
+    pcRatingTitle: "PC Rating Interface",
+    selectCpu: "Select CPU",
+    selectCpuPlaceholder: "-- Select CPU --",
+    selectGpu: "Select GPU",
+    selectGpuPlaceholder: "-- Select GPU --",
+    selectRam: "Select RAM",
+    selectRamPlaceholder: "-- Select RAM --",
+    calcScoreBtn: "Calculate Performance Score",
+    perfScoreLabel: "Performance Score",
+    userConfigsTitle: "User Configurations",
+    scoreColumn: "Score",
+    perfExcellent: "Excellent",
+    perfGood: "Good",
+    perfAverage: "Average",
+    perfPoor: "Below Average",
+    gameUltra: "Ultra",
+    gameHigh: "High",
+    gameMedium: "Medium",
+    gameLow: "Low",
+    gameUnplayable: "Unplayable"
   },
   es: {
     title: "Recursos del Sistema",
@@ -184,7 +232,30 @@ const translations = {
     remoteDesc: "Acceda a este panel desde cualquier dispositivo en su red:",
     modalTitle: "Sincronización del Sistema",
     modalBody: "Para habilitar la telemetría en tiempo real y la lectura de recursos en su red, autorice la sincronización del flujo de datos.",
-    modalBtn: "Iniciar Panel"
+    modalBtn: "Iniciar Panel",
+    // New Interface
+    gamePerformanceTitle: "Rendimiento en Juegos",
+    gameSettingsLabel: "Ajustes:",
+    pcRatingTitle: "Interfaz de Calificación PC",
+    selectCpu: "Seleccionar CPU",
+    selectCpuPlaceholder: "-- Seleccionar CPU --",
+    selectGpu: "Seleccionar GPU",
+    selectGpuPlaceholder: "-- Seleccionar GPU --",
+    selectRam: "Seleccionar RAM",
+    selectRamPlaceholder: "-- Seleccionar RAM --",
+    calcScoreBtn: "Calcular Puntuación de Rendimiento",
+    perfScoreLabel: "Puntuación de Rendimiento",
+    userConfigsTitle: "Configuraciones de Usuario",
+    scoreColumn: "Puntuación",
+    perfExcellent: "Excelente",
+    perfGood: "Bueno",
+    perfAverage: "Promedio",
+    perfPoor: "Por Debajo del Promedio",
+    gameUltra: "Ultra",
+    gameHigh: "Alto",
+    gameMedium: "Medio",
+    gameLow: "Bajo",
+    gameUnplayable: "Injugable"
   }
 };
 
@@ -192,9 +263,256 @@ const formatBytes = (bytes, decimals = 2) => {
   if (bytes === 0) return '0 B';
   const k = 1024;
   const dm = decimals < 0 ? 0 : decimals;
+  if (bytes === 0) return '0 B';
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+};
+
+const calculatePerformanceScore = (cpu, gpu, memory) => {
+  let score = 0;
+
+  // CPU scoring (max 50 points)
+  if (cpu) {
+    let cpuScore = 15; // Base score
+
+    // Cores and threads (max 15)
+    const cores = cpu.cores || 0;
+    const threads = cpu.threads || 0;
+    let coreScore = (cores * 1.5) + ((threads - cores) * 0.5);
+    cpuScore += Math.min(coreScore, 15);
+
+    // Clock speed (max 5 points)
+    const speed = cpu.speed || 0;
+    cpuScore += Math.min(speed, 5);
+
+    // Model-based scoring (max 15 points)
+    const cpuModel = (cpu.model || '').toLowerCase();
+    if (cpuModel.includes('i9') || cpuModel.includes('ryzen 9') || cpuModel.includes('m1 ultra') || cpuModel.includes('m2 ultra')) {
+      cpuScore += 15;
+    } else if (cpuModel.includes('i7') || cpuModel.includes('ryzen 7') || cpuModel.includes('m1 pro') || cpuModel.includes('m2 pro')) {
+      cpuScore += 12;
+    } else if (cpuModel.includes('i5') || cpuModel.includes('ryzen 5') || cpuModel.includes('m1') || cpuModel.includes('m2')) {
+      cpuScore += 8;
+    } else {
+      cpuScore += 4;
+    }
+
+    score += Math.min(cpuScore, 50);
+  }
+
+  // GPU scoring (max 30 points)
+  if (gpu) {
+    let gpuScore = 5; // Base score
+
+    // VRAM scoring (max 10 points)
+    const vram = gpu.vram || 0;
+    let vramGB = vram / (1024 * 1024 * 1024);
+    gpuScore += Math.min(vramGB * 0.5, 10);
+
+    // Vendor and model scoring (max 15 points)
+    const gpuVendor = (gpu.vendor || '').toLowerCase();
+    const gpuModel = (gpu.model || '').toLowerCase();
+
+    if (gpuVendor.includes('nvidia')) {
+      if (gpuModel.includes('rtx 4090') || gpuModel.includes('rtx 3090')) gpuScore += 15;
+      else if (gpuModel.includes('rtx 4080') || gpuModel.includes('rtx 3080')) gpuScore += 13;
+      else if (gpuModel.includes('rtx 4070') || gpuModel.includes('rtx 3070')) gpuScore += 11;
+      else if (gpuModel.includes('rtx 4060') || gpuModel.includes('rtx 3060')) gpuScore += 9;
+      else gpuScore += 5;
+    } else if (gpuVendor.includes('amd')) {
+      if (gpuModel.includes('rx 7900') || gpuModel.includes('rx 6900')) gpuScore += 14;
+      else if (gpuModel.includes('rx 7800') || gpuModel.includes('rx 6800')) gpuScore += 12;
+      else if (gpuModel.includes('rx 7700') || gpuModel.includes('rx 6700')) gpuScore += 10;
+      else if (gpuModel.includes('rx 7600') || gpuModel.includes('rx 6600')) gpuScore += 8;
+      else gpuScore += 4;
+    } else if (gpuVendor.includes('intel')) {
+      if (gpuModel.includes('arc a7') || gpuModel.includes('uhd 770')) gpuScore += 8;
+      else gpuScore += 3;
+    }
+
+    score += Math.min(gpuScore, 30);
+  }
+
+  // Memory scoring (max 20 points)
+  if (memory) {
+    const memoryGB = (memory.total || 0) / (1024 * 1024 * 1024);
+    let memScore = 0;
+    if (memoryGB >= 64) memScore = 20;
+    else if (memoryGB >= 32) memScore = 18;
+    else if (memoryGB >= 16) memScore = 14;
+    else if (memoryGB >= 8) memScore = 8;
+    else if (memoryGB >= 4) memScore = 4;
+
+    score += Math.min(memScore, 20);
+  }
+
+  // Normalize score to 0-100 scale
+  return Math.min(Math.max(Math.round(score), 0), 100);
+};
+
+const generateMockConfigurations = () => {
+  return [
+    {
+      id: 1,
+      cpu_model: 'Intel Core i9-12900K',
+      cpu_cores: 16,
+      cpu_threads: 24,
+      cpu_speed: 3.2,
+      gpu_model: 'NVIDIA GeForce RTX 4090',
+      gpu_vendor: 'NVIDIA',
+      gpu_vram: 24 * 1024 * 1024 * 1024,
+      memory_total: 32 * 1024 * 1024 * 1024,
+      performance_score: 95,
+      created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 1).toISOString()
+    },
+    {
+      id: 2,
+      cpu_model: 'AMD Ryzen 9 5900X',
+      cpu_cores: 12,
+      cpu_threads: 24,
+      cpu_speed: 3.7,
+      gpu_model: 'NVIDIA GeForce RTX 3080',
+      gpu_vendor: 'NVIDIA',
+      gpu_vram: 10 * 1024 * 1024 * 1024,
+      memory_total: 16 * 1024 * 1024 * 1024,
+      performance_score: 85,
+      created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString()
+    },
+    {
+      id: 3,
+      cpu_model: 'Intel Core i7-11700K',
+      cpu_cores: 8,
+      cpu_threads: 16,
+      cpu_speed: 3.6,
+      gpu_model: 'NVIDIA GeForce RTX 3070',
+      gpu_vendor: 'NVIDIA',
+      gpu_vram: 8 * 1024 * 1024 * 1024,
+      memory_total: 16 * 1024 * 1024 * 1024,
+      performance_score: 75,
+      created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString()
+    },
+    {
+      id: 4,
+      cpu_model: 'AMD Ryzen 5 5600X',
+      cpu_cores: 6,
+      cpu_threads: 12,
+      cpu_speed: 3.7,
+      gpu_model: 'NVIDIA GeForce RTX 3060',
+      gpu_vendor: 'NVIDIA',
+      gpu_vram: 12 * 1024 * 1024 * 1024,
+      memory_total: 16 * 1024 * 1024 * 1024,
+      performance_score: 65,
+      created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 4).toISOString()
+    },
+    {
+      id: 5,
+      cpu_model: 'Intel Core i5-10400',
+      cpu_cores: 6,
+      cpu_threads: 12,
+      cpu_speed: 2.9,
+      gpu_model: 'NVIDIA GeForce GTX 1660',
+      gpu_vendor: 'NVIDIA',
+      gpu_vram: 6 * 1024 * 1024 * 1024,
+      memory_total: 16 * 1024 * 1024 * 1024,
+      performance_score: 55,
+      created_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString()
+    }
+  ];
+};
+
+const calculateGamePerformance = (performanceScore) => {
+  // Games and their recommended performance scores for different settings
+  const games = [
+    {
+      name: 'Fortnite',
+      low: 40,
+      medium: 60,
+      high: 80,
+      ultra: 95
+    },
+    {
+      name: 'Call of Duty: Warzone',
+      low: 45,
+      medium: 65,
+      high: 85,
+      ultra: 98
+    },
+    {
+      name: 'Cyberpunk 2077',
+      low: 50,
+      medium: 70,
+      high: 90,
+      ultra: 100
+    },
+    {
+      name: 'Minecraft',
+      low: 30,
+      medium: 50,
+      high: 70,
+      ultra: 90
+    },
+    {
+      name: 'Valorant',
+      low: 35,
+      medium: 55,
+      high: 75,
+      ultra: 90
+    },
+    {
+      name: 'Grand Theft Auto V',
+      low: 40,
+      medium: 60,
+      high: 80,
+      ultra: 95
+    }
+  ];
+
+  // Calculate performance level for each game
+  return games.map(game => {
+    let settings;
+    if (performanceScore >= game.ultra) {
+      settings = 'Ultra';
+    } else if (performanceScore >= game.high) {
+      settings = 'High';
+    } else if (performanceScore >= game.medium) {
+      settings = 'Medium';
+    } else if (performanceScore >= game.low) {
+      settings = 'Low';
+    } else {
+      settings = 'Unplayable';
+    }
+
+    return {
+      name: game.name,
+      settings,
+      performance: performanceScore
+    };
+  });
+};
+
+const getGameSettingsColor = (settings) => {
+  switch (settings) {
+    case 'Ultra':
+      return '#fbbf24'; // Yellow
+    case 'High':
+      return '#10b981'; // Green
+    case 'Medium':
+      return '#3b82f6'; // Blue
+    case 'Low':
+      return '#f59e0b'; // Orange
+    case 'Unplayable':
+      return '#ef4444'; // Red
+    default:
+      return 'var(--text-secondary)';
+  }
+};
+
+const getScoreColor = (score) => {
+  if (score >= 90) return '#10b981'; // Green (Excellent)
+  if (score >= 70) return '#3b82f6'; // Blue (Good)
+  if (score >= 50) return '#f59e0b'; // Orange (Average)
+  return '#ef4444'; // Red (Below Average)
 };
 
 const formatSpeed = (bytes) => {
@@ -242,23 +560,235 @@ const PermissionModal = ({ onGrant, t }) => (
   </motion.div>
 );
 
+const getClientDeviceName = () => {
+  const ua = navigator.userAgent;
+  let device = "Browser Client";
+
+  if (/android/i.test(ua)) {
+    device = "Android Device";
+    const androidMatch = ua.match(/Android.*?; (.*?) (Build|AppleWebKit)/);
+    if (androidMatch && androidMatch[1]) device = `Android (${androidMatch[1].trim()})`;
+  } else if (/iPad|iPhone|iPod/.test(ua)) {
+    device = /iPad/.test(ua) ? "iPad" : "iPhone";
+  } else if (/Macintosh/.test(ua)) {
+    device = "Mac";
+  } else if (/Windows/.test(ua)) {
+    device = "Windows PC";
+  } else if (/Linux/.test(ua)) {
+    device = "Linux PC";
+  }
+
+  return device;
+};
+
+const getClientGPU = () => {
+  try {
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (gl) {
+      const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+      if (debugInfo) {
+        const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+        const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+        return { vendor, renderer };
+      }
+    }
+  } catch (e) { }
+  return { vendor: 'Mobile GPU', renderer: 'Integrated Graphics' };
+};
+
+const isMobileClient = () => {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+};
+
 const App = () => {
   const [stats, setStats] = useState(null);
   const [history, setHistory] = useState([]);
   const [lang, setLang] = useState('en');
   const [theme, setTheme] = useState('dark');
   const [showModal, setShowModal] = useState(false);
-  const [permissionGranted, setPermissionGranted] = useState(false);
+  const [performanceScore, setPerformanceScore] = useState(0);
+  const [gamePerformance, setGamePerformance] = useState([]);
+  const [configurations, setConfigurations] = useState([]);
+  const [selectedConfig, setSelectedConfig] = useState(null);
+  const [permissionGranted, setPermissionGranted] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [resolvedBackendUrl, setResolvedBackendUrl] = useState(null);
-  const [staticHostNeedsBackend, setStaticHostNeedsBackend] = useState(false);
   const [isClientOnlyMode, setIsClientOnlyMode] = useState(false);
+  const [clientDeviceName, setClientDeviceName] = useState('Browser Client');
+  const [clientHardware, setClientHardware] = useState({ gpu: null, cpu: null });
+  const [clientDiskStats, setClientDiskStats] = useState(null);
   const clientStatsIntervalRef = useRef(null);
   const socketRef = useRef(null);
   const { width } = useWindowSize();
   const isMobile = width < 768;
 
   const t = translations[lang];
+
+  // Handler for CPU selection
+  const handleCpuChange = (cpuModel) => {
+    if (!cpuModel) {
+      setSelectedConfig(prev => ({ ...prev, cpu: null, cpu_model: '' }));
+      return;
+    }
+
+    // Get CPU details based on model
+    let cpuDetails = {
+      model: cpuModel,
+      cores: 8,
+      threads: 16,
+      speed: 3.6
+    };
+
+    if (cpuModel === 'Intel Core i9-12900K') {
+      cpuDetails = {
+        model: cpuModel,
+        cores: 16,
+        threads: 24,
+        speed: 3.2
+      };
+    } else if (cpuModel === 'AMD Ryzen 9 5900X') {
+      cpuDetails = {
+        model: cpuModel,
+        cores: 12,
+        threads: 24,
+        speed: 3.7
+      };
+    } else if (cpuModel === 'Intel Core i7-11700K') {
+      cpuDetails = {
+        model: cpuModel,
+        cores: 8,
+        threads: 16,
+        speed: 3.6
+      };
+    } else if (cpuModel === 'AMD Ryzen 5 5600X') {
+      cpuDetails = {
+        model: cpuModel,
+        cores: 6,
+        threads: 12,
+        speed: 3.7
+      };
+    } else if (cpuModel === 'Intel Core i5-10400') {
+      cpuDetails = {
+        model: cpuModel,
+        cores: 6,
+        threads: 12,
+        speed: 2.9
+      };
+    }
+
+    setSelectedConfig(prev => ({
+      ...prev,
+      cpu: cpuDetails,
+      cpu_model: cpuModel
+    }));
+  };
+
+  // Handler for GPU selection
+  const handleGpuChange = (gpuModel) => {
+    if (!gpuModel) {
+      setSelectedConfig(prev => ({ ...prev, gpu: null, gpu_model: '' }));
+      return;
+    }
+
+    // Get GPU details based on model
+    let gpuDetails = {
+      model: gpuModel,
+      vendor: 'NVIDIA',
+      vram: 8 * 1024 * 1024 * 1024
+    };
+
+    if (gpuModel === 'NVIDIA GeForce RTX 4090') {
+      gpuDetails = {
+        model: gpuModel,
+        vendor: 'NVIDIA',
+        vram: 24 * 1024 * 1024 * 1024
+      };
+    } else if (gpuModel === 'NVIDIA GeForce RTX 3080') {
+      gpuDetails = {
+        model: gpuModel,
+        vendor: 'NVIDIA',
+        vram: 10 * 1024 * 1024 * 1024
+      };
+    } else if (gpuModel === 'NVIDIA GeForce RTX 3070') {
+      gpuDetails = {
+        model: gpuModel,
+        vendor: 'NVIDIA',
+        vram: 8 * 1024 * 1024 * 1024
+      };
+    } else if (gpuModel === 'NVIDIA GeForce RTX 3060') {
+      gpuDetails = {
+        model: gpuModel,
+        vendor: 'NVIDIA',
+        vram: 12 * 1024 * 1024 * 1024
+      };
+    } else if (gpuModel === 'NVIDIA GeForce GTX 1660') {
+      gpuDetails = {
+        model: gpuModel,
+        vendor: 'NVIDIA',
+        vram: 6 * 1024 * 1024 * 1024
+      };
+    }
+
+    setSelectedConfig(prev => ({
+      ...prev,
+      gpu: gpuDetails,
+      gpu_model: gpuModel
+    }));
+  };
+
+  // Handler for RAM selection
+  const handleRamChange = (ramGB) => {
+    if (!ramGB) {
+      setSelectedConfig(prev => ({ ...prev, memory: null, memory_total: null }));
+      return;
+    }
+    const totalMemory = parseInt(ramGB) * 1024 * 1024 * 1024;
+    setSelectedConfig(prev => ({
+      ...prev,
+      memory: {
+        total: totalMemory
+      },
+      memory_total: totalMemory
+    }));
+  };
+
+  // Calculate performance score for selected config
+  const calculateConfigScore = () => {
+    if (selectedConfig && selectedConfig.cpu && selectedConfig.gpu && selectedConfig.memory) {
+      const score = calculatePerformanceScore(selectedConfig.cpu, selectedConfig.gpu, selectedConfig.memory);
+
+      const newConfigWithScore = {
+        ...selectedConfig,
+        performance_score: score
+      };
+
+      setSelectedConfig(newConfigWithScore);
+
+      // Add to configurations table at the top
+      setConfigurations(prev => [
+        {
+          id: Date.now(),
+          cpu_model: selectedConfig.cpu_model,
+          cpu_cores: selectedConfig.cpu.cores,
+          cpu_threads: selectedConfig.cpu.threads,
+          gpu_model: selectedConfig.gpu_model,
+          gpu_vram: selectedConfig.gpu.vram,
+          memory_total: selectedConfig.memory_total,
+          performance_score: score
+        },
+        ...prev
+      ]);
+    }
+  };
+
+  // Get performance level based on score
+  const getPerformanceLevel = (score, t) => {
+    if (score >= 90) return t.perfExcellent;
+    if (score >= 70) return t.perfGood;
+    if (score >= 50) return t.perfAverage;
+    return t.perfPoor;
+  };
 
   useEffect(() => {
     // Theme initialization
@@ -273,6 +803,35 @@ const App = () => {
       setShowModal(true);
     }
 
+    const deviceName = getClientDeviceName();
+    setClientDeviceName(deviceName);
+
+    if (isMobileClient()) {
+      const gpuInfo = getClientGPU();
+      setClientHardware({
+        gpu: gpuInfo,
+        cpu: { model: `${deviceName} SOC`, cores: navigator.hardwareConcurrency || 'Unknown' }
+      });
+
+      // Fetch real browser storage estimate for mobile devices
+      if (navigator.storage && navigator.storage.estimate) {
+        navigator.storage.estimate().then(estimate => {
+          const quota = estimate.quota || 0;
+          const usage = estimate.usage || 0;
+          setClientDiskStats({
+            quota,
+            usage,
+            available: quota - usage,
+            pct: quota > 0 ? (usage / quota) * 100 : 0
+          });
+        }).catch(() => { });
+      }
+    }
+
+    // Initialize configurations with mock data
+    const mockConfigs = generateMockConfigurations();
+    setConfigurations(mockConfigs);
+
     let socket = null;
 
     (async () => {
@@ -281,12 +840,16 @@ const App = () => {
 
       if (!backendUrl) {
         // No backend configured: use client-side stats so the app works (Netlify, Vercel, etc.)
-        setStaticHostNeedsBackend(isStaticOnlyHost(window.location.hostname));
+        // Browser mode works on any host - no need to show "backend required" error
         setIsClientOnlyMode(true);
         setConnectionStatus('connected');
         const tick = () => {
           collectClientStats().then(data => {
             setStats(data);
+            const score = calculatePerformanceScore(data.cpu, data.gpu, data.memory);
+            setPerformanceScore(score);
+            const gamePerf = calculateGamePerformance(score);
+            setGamePerformance(gamePerf);
             setHistory(prev => {
               const next = [...prev, {
                 time: new Date(data.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
@@ -297,6 +860,8 @@ const App = () => {
               }];
               return next.slice(-20);
             });
+          }).catch(err => {
+            console.error('Failed to collect client stats:', err);
           });
         };
         tick();
@@ -331,6 +896,10 @@ const App = () => {
 
       socket.on('stats', (data) => {
         setStats(data);
+        const score = calculatePerformanceScore(data.cpu, data.gpu, data.memory);
+        setPerformanceScore(score);
+        const gamePerf = calculateGamePerformance(score);
+        setGamePerformance(gamePerf);
         setHistory(prev => {
           const newHistory = [...prev, {
             time: new Date(data.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
@@ -435,34 +1004,12 @@ const App = () => {
             </p>
             {connectionStatus === 'error' && (
               <div style={{ marginTop: '24px', padding: '20px', background: 'rgba(255,255,255,0.04)', borderRadius: '12px', border: '1px solid var(--card-border)', maxWidth: '420px', textAlign: 'left' }}>
-                {staticHostNeedsBackend ? (
-                  <>
-                    <p style={{ fontSize: '0.85rem', color: 'var(--text-primary)', marginBottom: '12px', fontWeight: '600' }}>
-                      Backend required
-                    </p>
-                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '12px' }}>
-                      This site is hosted on a static host (e.g. Netlify, Vercel). It only serves the frontend. The <strong>backend</strong> (Node.js server) must run on a different service.
-                    </p>
-                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                      1. Deploy the backend to <strong>Railway</strong>, <strong>Render</strong>, <strong>Fly.io</strong>, or any Node.js host.
-                    </p>
-                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
-                      2. In your repo, set <code style={{ background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: '4px', fontSize: '0.7rem' }}>public/config.json</code> → <code style={{ background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: '4px', fontSize: '0.7rem' }}>backendUrl</code> to that backend URL, then redeploy this frontend.
-                    </p>
-                    <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', opacity: 0.8 }}>
-                      Example: <code style={{ background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: '4px', fontSize: '0.65rem', wordBreak: 'break-all' }}>{'"backendUrl": "https://your-app.railway.app"'}</code>
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                      Backend: {resolvedBackendUrl || 'not set'}
-                    </p>
-                    <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', opacity: 0.7 }}>
-                      Set your backend URL in <code style={{ background: 'rgba(0,0,0,0.2)', padding: '2px 6px', borderRadius: '4px' }}>config.json</code> (backendUrl) or ensure the backend server is running and port 3001 is reachable.
-                    </p>
-                  </>
-                )}
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                  Backend: {resolvedBackendUrl || 'not set'}
+                </p>
+                <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', opacity: 0.7 }}>
+                  Set your backend URL in <code style={{ background: 'rgba(0,0,0,0.2)', padding: '2px 6px', borderRadius: '4px' }}>config.json</code> (backendUrl) or ensure the backend server is running and port 3001 is reachable.
+                </p>
               </div>
             )}
           </div>
@@ -473,9 +1020,7 @@ const App = () => {
 
   return (
     <div style={{ background: 'var(--background)', minHeight: '100vh', position: 'relative' }}>
-      <button className="theme-toggle" onClick={toggleTheme} title="Switch Theme">
-        {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
-      </button>
+
 
       <div className="bg-blob" style={{ top: '5%', left: '5%' }}></div>
       <div className="bg-blob-2" style={{ bottom: '10%', right: '5%' }}></div>
@@ -488,7 +1033,7 @@ const App = () => {
             animate={{ opacity: 1, y: 0 }}
             transition={{ type: "spring", stiffness: 100 }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '24px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginBottom: '24px', flexWrap: 'wrap' }}>
               <div className="badge">
                 <span className="live-indicator"></span>
                 {t.liveStatus}
@@ -500,9 +1045,31 @@ const App = () => {
               )}
             </div>
             <h1>{t.title}</h1>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '1.1rem' }}>{t.subtitle}</p>
-            <div style={{ color: 'var(--accent-primary)', fontSize: '0.9rem', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-              {stats.device?.hostname} • {stats.device?.model}
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '16px', fontSize: '1.1rem' }}>{t.subtitle}</p>
+            {/* Device Info Row */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center', marginBottom: '8px' }}>
+              {/* Server info */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--liquid-glass)', border: '1px solid var(--card-border)', borderRadius: '12px', padding: '8px 14px' }}>
+                <Activity size={13} color="var(--accent-primary)" />
+                <div style={{ textAlign: 'left' }}>
+                  <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '2px' }}>Server</div>
+                  <div style={{ fontSize: '0.8rem', fontWeight: '700', color: 'var(--text-primary)' }}>{stats.device?.hostname}</div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>{stats.device?.model} • {stats.device?.distro}</div>
+                </div>
+              </div>
+              {/* Client info */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--liquid-glass)', border: '1px solid var(--card-border)', borderRadius: '12px', padding: '8px 14px' }}>
+                <Smartphone size={13} color="var(--accent-secondary)" />
+                <div style={{ textAlign: 'left' }}>
+                  <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '2px' }}>Client</div>
+                  <div style={{ fontSize: '0.8rem', fontWeight: '700', color: 'var(--text-primary)' }}>{clientDeviceName}</div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                    {navigator.hardwareConcurrency ? `${navigator.hardwareConcurrency} Cores` : ''}
+                    {navigator.deviceMemory ? ` • ${navigator.deviceMemory} GB RAM` : ''}
+                    {navigator.connection?.effectiveType ? ` • ${navigator.connection.effectiveType.toUpperCase()}` : ''}
+                  </div>
+                </div>
+              </div>
             </div>
           </motion.div>
         </header>
@@ -574,12 +1141,347 @@ const App = () => {
             </div>
           </motion.div>
 
-          {/* Network Block */}
+          {/* CPU Block */}
           <motion.div
             className="glass-card"
             initial={{ opacity: 0, x: 50 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.3 }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div className="stat-label">CPU</div>
+              <div style={{ padding: '8px', borderRadius: '12px', background: 'rgba(239, 68, 68, 0.1)' }}>
+                <Cpu size={20} color="#ef4444" />
+              </div>
+            </div>
+            <div style={{ marginTop: '16px' }}>
+              <div style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '8px' }}>
+                {isMobileClient() && clientHardware.cpu?.model !== 'Browser Client SOC' ? clientHardware.cpu?.model : (stats.cpu?.model || 'Unknown')}
+              </div>
+              <div style={{ display: 'flex', gap: '16px', color: 'var(--text-secondary)', fontSize: '0.85rem', flexWrap: 'wrap' }}>
+                {isMobileClient() && clientHardware.cpu?.cores !== 'Unknown' && (
+                  <div style={{ color: 'var(--accent-secondary)' }}>{clientHardware.cpu?.cores} Cores (Client)</div>
+                )}
+                <div>{stats.cpu?.cores || 0} Cores (Server)</div>
+                <div>{stats.cpu?.threads || 0} Threads</div>
+                <div>{stats.cpu?.speed?.toFixed(1) || 0} GHz</div>
+              </div>
+              <div style={{ marginTop: '16px' }}>
+                <div className="progress-bar-container">
+                  <div
+                    className="progress-bar-fill"
+                    style={{
+                      width: `${stats.cpu?.currentLoad || 0}%`,
+                      background: 'linear-gradient(to right, #ef4444, #dc2626)'
+                    }}
+                  ></div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* GPU Block */}
+          <motion.div
+            className="glass-card"
+            initial={{ opacity: 0, x: 50 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.4 }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div className="stat-label">GPU</div>
+              <div style={{ padding: '8px', borderRadius: '12px', background: 'rgba(34, 197, 94, 0.1)' }}>
+                <Activity size={20} color="#22c55e" />
+              </div>
+            </div>
+            <div style={{ marginTop: '16px' }}>
+              <div style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '8px' }}>
+                {isMobileClient() && clientHardware.gpu?.renderer !== 'Integrated Graphics' ? clientHardware.gpu?.renderer : (stats.gpu?.model || 'Unknown')}
+              </div>
+              <div style={{ display: 'flex', gap: '16px', color: 'var(--text-secondary)', fontSize: '0.85rem', flexWrap: 'wrap' }}>
+                {isMobileClient() && clientHardware.gpu?.vendor !== 'Mobile GPU' && (
+                  <div style={{ color: 'var(--accent-secondary)' }}>{clientHardware.gpu?.vendor} (Client)</div>
+                )}
+                <div>{stats.gpu?.vendor || 'Unknown'} (Server)</div>
+                <div>{formatBytes(stats.gpu?.vram || 0)} VRAM</div>
+                {stats.gpu?.bus && stats.gpu.bus !== 'Unknown' && <div>Bus: {stats.gpu.bus}</div>}
+              </div>
+              {(stats.gpu?.cores || stats.gpu?.temperatureGpu !== undefined) && (
+                <div style={{ display: 'flex', gap: '20px', marginTop: '12px' }}>
+                  {stats.gpu?.temperatureGpu !== undefined && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--liquid-glass)', padding: '6px 12px', borderRadius: '12px' }}>
+                      <Thermometer size={14} color={stats.gpu?.temperatureGpu > 75 ? "#ef4444" : "#22c55e"} />
+                      <span style={{ fontSize: '0.9rem', fontWeight: '700' }}>{stats.gpu?.temperatureGpu}°</span>
+                      <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: '800' }}>C</span>
+                    </div>
+                  )}
+                  {stats.gpu?.cores && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--liquid-glass)', padding: '6px 12px', borderRadius: '12px' }}>
+                      <Cpu size={14} color="#22c55e" />
+                      <span style={{ fontSize: '0.9rem', fontWeight: '700' }}>{stats.gpu?.cores}</span>
+                      <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: '800' }}>CORES</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              {stats.gpu?.displays && stats.gpu.displays.length > 0 && (
+                <div style={{ marginTop: '16px', borderTop: '1px solid var(--card-border)', paddingTop: '12px' }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-secondary)', marginBottom: '8px' }}>Displays</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {stats.gpu.displays.map((display, idx) => (
+                      <div key={idx} style={{ fontSize: '0.8rem', display: 'flex', justifyContent: 'space-between', background: 'rgba(255,255,255,0.02)', padding: '6px 10px', borderRadius: '8px' }}>
+                        <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '60%' }}>{display.model || `Display ${idx + 1}`}</div>
+                        <div style={{ color: 'var(--accent-secondary)' }}>
+                          {display.resolutionx}x{display.resolutiony} {display.refreshRate ? `@ ${display.refreshRate}Hz` : ''}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </motion.div>
+
+          {/* Performance Score Block */}
+          <motion.div
+            className="glass-card"
+            initial={{ opacity: 0, x: 50 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.5 }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div className="stat-label">Performance Score</div>
+              <div style={{ padding: '8px', borderRadius: '12px', background: 'rgba(251, 191, 36, 0.1)' }}>
+                <Zap size={20} color="#fbbf24" />
+              </div>
+            </div>
+            <div style={{ marginTop: '16px' }}>
+              <div style={{ fontSize: '3rem', fontWeight: '800', color: '#fbbf24', textAlign: 'center' }}>
+                {performanceScore}
+              </div>
+              <div style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '8px' }}>
+                {getPerformanceLevel(performanceScore, t)}
+              </div>
+              <div className="progress-bar-container" style={{ marginTop: '16px' }}>
+                <div
+                  className="progress-bar-fill"
+                  style={{
+                    width: `${performanceScore}%`,
+                    background: performanceScore >= 90 ? 'linear-gradient(to right, #fbbf24, #f59e0b)' :
+                      performanceScore >= 70 ? 'linear-gradient(to right, #10b981, #059669)' :
+                        performanceScore >= 50 ? 'linear-gradient(to right, #3b82f6, #2563eb)' :
+                          'linear-gradient(to right, #ef4444, #dc2626)'
+                  }}
+                ></div>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Game Performance Block */}
+          <motion.div
+            className="glass-card"
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.6 }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div className="stat-label">{t.gamePerformanceTitle}</div>
+              <div style={{ padding: '8px', borderRadius: '12px', background: 'rgba(168, 85, 247, 0.1)' }}>
+                <Activity size={20} color="#a855f7" />
+              </div>
+            </div>
+            <div style={{ marginTop: '16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '12px' }}>
+                {gamePerformance.map((game, index) => (
+                  <div key={index} style={{ padding: '12px', borderRadius: '8px', background: 'rgba(255, 255, 255, 0.03)' }}>
+                    <div style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '4px' }}>{game.name}</div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      {t.gameSettingsLabel} <span style={{ color: getGameSettingsColor(game.settings) }}>{t['game' + game.settings]}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+
+          {/* PC Rating Interface Block */}
+          <motion.div
+            className="glass-card"
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.7 }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div className="stat-label">{t.pcRatingTitle}</div>
+              <div style={{ padding: '8px', borderRadius: '12px', background: 'rgba(245, 158, 11, 0.1)' }}>
+                <Activity size={20} color="#f59e0b" />
+              </div>
+            </div>
+            <div style={{ marginTop: '16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
+                <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(255, 255, 255, 0.03)' }}>
+                  <div style={{ fontSize: '0.8rem', fontWeight: '600', marginBottom: '8px' }}>{t.selectCpu}</div>
+                  <select
+                    style={{
+                      width: '100%',
+                      padding: '8px',
+                      borderRadius: '4px',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid var(--card-border)',
+                      color: 'var(--text-primary)',
+                      fontSize: '0.85rem'
+                    }}
+                    onChange={(e) => handleCpuChange(e.target.value)}
+                    value={selectedConfig?.cpu_model || ''}
+                  >
+                    <option value="">{t.selectCpuPlaceholder}</option>
+                    <option value="Intel Core i9-12900K">Intel Core i9-12900K</option>
+                    <option value="AMD Ryzen 9 5900X">AMD Ryzen 9 5900X</option>
+                    <option value="Intel Core i7-11700K">Intel Core i7-11700K</option>
+                    <option value="AMD Ryzen 5 5600X">AMD Ryzen 5 5600X</option>
+                    <option value="Intel Core i5-10400">Intel Core i5-10400</option>
+                  </select>
+                </div>
+                <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(255, 255, 255, 0.03)' }}>
+                  <div style={{ fontSize: '0.8rem', fontWeight: '600', marginBottom: '8px' }}>{t.selectGpu}</div>
+                  <select
+                    style={{
+                      width: '100%',
+                      padding: '8px',
+                      borderRadius: '4px',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid var(--card-border)',
+                      color: 'var(--text-primary)',
+                      fontSize: '0.85rem'
+                    }}
+                    onChange={(e) => handleGpuChange(e.target.value)}
+                    value={selectedConfig?.gpu_model || ''}
+                  >
+                    <option value="">{t.selectGpuPlaceholder}</option>
+                    <option value="NVIDIA GeForce RTX 4090">NVIDIA GeForce RTX 4090</option>
+                    <option value="NVIDIA GeForce RTX 3080">NVIDIA GeForce RTX 3080</option>
+                    <option value="NVIDIA GeForce RTX 3070">NVIDIA GeForce RTX 3070</option>
+                    <option value="NVIDIA GeForce RTX 3060">NVIDIA GeForce RTX 3060</option>
+                    <option value="NVIDIA GeForce GTX 1660">NVIDIA GeForce GTX 1660</option>
+                  </select>
+                </div>
+                <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(255, 255, 255, 0.03)' }}>
+                  <div style={{ fontSize: '0.8rem', fontWeight: '600', marginBottom: '8px' }}>{t.selectRam}</div>
+                  <select
+                    style={{
+                      width: '100%',
+                      padding: '8px',
+                      borderRadius: '4px',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid var(--card-border)',
+                      color: 'var(--text-primary)',
+                      fontSize: '0.85rem'
+                    }}
+                    onChange={(e) => handleRamChange(e.target.value)}
+                    value={selectedConfig?.memory_total ? (selectedConfig.memory_total / (1024 * 1024 * 1024)).toString() : ''}
+                  >
+                    <option value="">{t.selectRamPlaceholder}</option>
+                    <option value="8">8 GB</option>
+                    <option value="16">16 GB</option>
+                    <option value="32">32 GB</option>
+                    <option value="64">64 GB</option>
+                  </select>
+                </div>
+              </div>
+              <div style={{ marginTop: '16px' }}>
+                <button
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    borderRadius: '8px',
+                    background: 'linear-gradient(to right, var(--accent-primary), var(--accent-secondary))',
+                    border: 'none',
+                    color: 'white',
+                    fontSize: '0.9rem',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    transition: 'opacity 0.2s ease'
+                  }}
+                  onClick={calculateConfigScore}
+                  disabled={!selectedConfig || !selectedConfig.cpu_model || !selectedConfig.gpu_model || selectedConfig.memory_total == null}
+                >
+                  {t.calcScoreBtn}
+                </button>
+              </div>
+              {selectedConfig && selectedConfig.performance_score !== undefined && (
+                <div style={{ marginTop: '16px', padding: '16px', borderRadius: '8px', background: 'rgba(255, 255, 255, 0.05)' }}>
+                  <div style={{ fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-secondary)' }}>{t.perfScoreLabel}</div>
+                  <div style={{ fontSize: '2rem', fontWeight: '800', color: getScoreColor(selectedConfig.performance_score) }}>
+                    {selectedConfig.performance_score}
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                    {getPerformanceLevel(selectedConfig.performance_score, t)}
+                  </div>
+                </div>
+              )}
+            </div>
+          </motion.div>
+
+          {/* User Configuration Comparison Block */}
+          <motion.div
+            className="glass-card"
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.8 }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div className="stat-label">{t.userConfigsTitle}</div>
+              <div style={{ padding: '8px', borderRadius: '12px', background: 'rgba(59, 130, 246, 0.1)' }}>
+                <Globe size={20} color="#3b82f6" />
+              </div>
+            </div>
+            <div style={{ marginTop: '16px' }}>
+              <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--card-border)' }}>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-secondary)' }}>CPU</th>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-secondary)' }}>GPU</th>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-secondary)' }}>RAM</th>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-secondary)' }}>{t.scoreColumn}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {configurations.map((config, index) => (
+                      <tr key={index} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                        <td style={{ padding: '12px 8px', fontSize: '0.85rem' }}>
+                          <div style={{ fontWeight: '600' }}>{config.cpu_model}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                            {config.cpu_cores} Cores / {config.cpu_threads} Threads
+                          </div>
+                        </td>
+                        <td style={{ padding: '12px 8px', fontSize: '0.85rem' }}>
+                          <div style={{ fontWeight: '600' }}>{config.gpu_model}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                            {formatBytes(config.gpu_vram || 0)} VRAM
+                          </div>
+                        </td>
+                        <td style={{ padding: '12px 8px', fontSize: '0.85rem' }}>
+                          {formatBytes(config.memory_total || 0)}
+                        </td>
+                        <td style={{ padding: '12px 8px', fontSize: '0.85rem' }}>
+                          <div style={{ fontWeight: '600', color: getScoreColor(config.performance_score) }}>
+                            {config.performance_score}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Network Block */}
+          <motion.div
+            className="glass-card"
+            initial={{ opacity: 0, x: 50 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.5 }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <div className="stat-label">{t.network}</div>
@@ -637,21 +1539,78 @@ const App = () => {
               {stats.disk?.[0]?.used?.toFixed(1) || '0.0'}%
             </div>
             <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-              {formatBytes(stats.disk?.[0]?.size * (stats.disk?.[0]?.used / 100) || 0)} <span style={{ opacity: 0.4 }}>/</span> {formatBytes(stats.disk?.[0]?.size || 0)}
+              {formatBytes((stats.disk?.[0]?.usedBytes ?? (stats.disk?.[0]?.size * (stats.disk?.[0]?.used / 100))) || 0)}
+              <span style={{ opacity: 0.4 }}> / </span>
+              {formatBytes(stats.disk?.[0]?.size || 0)}
+              <span style={{ opacity: 0.4 }}> &nbsp;·&nbsp; </span>
+              <span style={{ color: '#10b981' }}>{formatBytes(stats.disk?.[0]?.size - (stats.disk?.[0]?.size * (stats.disk?.[0]?.used / 100)) || 0)} free</span>
             </div>
             <div className="progress-bar-container">
               <div
                 className="progress-bar-fill"
                 style={{
                   width: `${stats.disk?.[0]?.used || 0}%`,
-                  background: 'linear-gradient(to right, #10b981, #059669)'
+                  background: stats.disk?.[0]?.used > 80 ? 'linear-gradient(to right, #f59e0b, #ef4444)' : 'linear-gradient(to right, #10b981, #059669)'
                 }}
               ></div>
             </div>
-            <div style={{ marginTop: '16px', fontSize: '0.7rem', color: 'var(--text-secondary)', fontFamily: 'monospace', opacity: 0.8 }}>
-              {stats.disk?.[0]?.fs} • {stats.disk?.[0]?.mount}
+            <div style={{ marginTop: '16px', fontSize: '0.7rem', color: 'var(--text-secondary)', fontFamily: 'monospace', opacity: 0.8, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>{stats.disk?.[0]?.fs} • {stats.disk?.[0]?.mount}</span>
+              {stats.disk?.[0]?.isClientStorage && (
+                <span style={{
+                  background: 'rgba(6,182,212,0.1)',
+                  border: '1px solid rgba(6,182,212,0.2)',
+                  color: 'var(--accent-secondary)',
+                  borderRadius: '6px',
+                  padding: '2px 6px',
+                  fontSize: '0.65rem',
+                  fontWeight: '700'
+                }}>Browser Quota</span>
+              )}
             </div>
           </motion.div>
+
+          {/* Client Browser Storage Card — shown when on mobile with backend connected */}
+          {isMobileClient() && clientDiskStats && (
+            <motion.div
+              className="glass-card"
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.45 }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                  <div className="stat-label">Device Storage</div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--accent-secondary)', marginTop: '4px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Browser Quota</div>
+                </div>
+                <div style={{ padding: '8px', borderRadius: '12px', background: 'rgba(6,182,212,0.1)' }}>
+                  <Smartphone size={20} color="var(--accent-secondary)" />
+                </div>
+              </div>
+              <div className="stat-value" style={{ fontSize: '2.5rem', marginTop: '24px' }}>
+                {clientDiskStats.pct.toFixed(1)}%
+              </div>
+              <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                {formatBytes(clientDiskStats.usage)}
+                <span style={{ opacity: 0.4 }}> / </span>
+                {formatBytes(clientDiskStats.quota)}
+                <span style={{ opacity: 0.4 }}> &nbsp;·&nbsp; </span>
+                <span style={{ color: '#10b981' }}>{formatBytes(clientDiskStats.available)} free</span>
+              </div>
+              <div className="progress-bar-container">
+                <div
+                  className="progress-bar-fill"
+                  style={{
+                    width: `${clientDiskStats.pct}%`,
+                    background: clientDiskStats.pct > 80 ? 'linear-gradient(to right, #f59e0b, #ef4444)' : 'linear-gradient(to right, var(--accent-secondary), #0ea5e9)'
+                  }}
+                ></div>
+              </div>
+              <div style={{ marginTop: '12px', fontSize: '0.7rem', color: 'var(--text-secondary)', opacity: 0.7 }}>
+                Space available for this web app on your device
+              </div>
+            </motion.div>
+          )}
 
           {/* Device Power Status */}
           {stats.battery?.hasBattery && (
@@ -823,23 +1782,30 @@ const App = () => {
           alignItems: 'center',
           gap: '20px'
         }}>
-          <div style={{ display: 'flex', gap: '12px' }}>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center' }}>
+            {/* Language toggle */}
             <motion.button
-              whileHover={{ scale: 1.1 }}
+              whileHover={{ scale: 1.08 }}
               whileTap={{ scale: 0.95 }}
               onClick={toggleLang}
               className="badge"
-              style={{
-                cursor: 'pointer',
-                background: 'var(--liquid-glass)',
-                border: '1px solid var(--card-border)',
-                color: 'var(--text-primary)',
-                gap: '8px'
-              }}
+              style={{ cursor: 'pointer', background: 'var(--liquid-glass)', border: '1px solid var(--card-border)', color: 'var(--text-primary)', gap: '8px' }}
             >
               <Globe size={14} color="var(--accent-primary)" />
               {t.langButton}
             </motion.button>
+            {/* Theme toggle */}
+            <motion.button
+              whileHover={{ scale: 1.08 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={toggleTheme}
+              className="badge"
+              style={{ cursor: 'pointer', background: 'var(--liquid-glass)', border: '1px solid var(--card-border)', color: 'var(--text-primary)', gap: '8px' }}
+            >
+              {theme === 'dark' ? <Sun size={14} color="#fbbf24" /> : <Moon size={14} color="var(--accent-primary)" />}
+              {theme === 'dark' ? 'Light' : 'Dark'}
+            </motion.button>
+            {/* Live badge */}
             <div className="badge" style={{ background: 'var(--liquid-glass)', color: 'var(--accent-secondary)', border: '1px solid var(--card-border)' }}>
               <MousePointer2 size={12} style={{ marginRight: '6px' }} />
               Live Interactive

@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  readerby:
+    build: .
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+    restart: unless-stopped
+    # For Puppeteer/Chromium
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp:unconfined

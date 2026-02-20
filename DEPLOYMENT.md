@@ -20,33 +20,49 @@ This guide explains how to make ReaderBy accessible both locally and globally.
    - Frontend: `http://localhost:5173`
    - Backend: `http://localhost:3001`
 
-## When the page doesn't work from another network
+## How the App Works in Different Environments
 
-If the site works on the same machine but **not from another device or network**:
+The app automatically detects the environment and connects appropriately:
 
-1. **Backend URL at runtime (no rebuild):**  
-   Edit `public/config.json` and set `backendUrl` to the URL where your backend is reachable from that network:
-   ```json
-   { "backendUrl": "https://your-backend-url.loca.lt" }
-   ```
-   Then reload the page. Use this when frontend and backend have different URLs (e.g. two tunnels, or frontend on CDN and backend on a server).
-
-2. **Port forwarding:**  
-   If you access the app via your public IP (e.g. `http://YOUR_PUBLIC_IP:5173`), your router must forward **both** port **5173** (frontend) and port **3001** (backend) to the same machine. The app will try to connect to `http://YOUR_PUBLIC_IP:3001`.
-
-3. **Tunnels:**  
-   If you use localtunnel/ngrok, create one tunnel for the frontend (port 5173) and one for the backend (port 3001). Put the **backend** tunnel URL in `public/config.json` → `backendUrl`, then open the **frontend** tunnel URL in the browser.
+| Environment | Frontend | Backend | Behavior |
+|-------------|----------|---------|----------|
+| **Local Dev** | `localhost:5173` | `localhost:3001` | Auto-connects to backend on port 3001 |
+| **Production Server** | `hostname:3001` | `hostname:3001` | Same server serves both |
+| **Tunnel (Production)** | `tunnel-url` | `tunnel-url` | Tunnel forwards to production server |
+| **Static Host (Netlify, Vercel)** | Static files | N/A | Browser mode (client-side stats) |
+| **Hybrid** | Static host | Separate backend | Set `backendUrl` in config.json |
 
 ## Making it Work Globally
 
-### Option 1: Runtime config (public/config.json)
+### Option 1: Production Server + Tunnel (Recommended)
 
-Set `backendUrl` in `public/config.json` to your backend’s public URL. The app loads this when the page opens, so you can change it without rebuilding. Example:
+This is the simplest way to share your app globally:
+
+1. **Build and start production server:**
+   ```bash
+   npm run build && npm run start:prod
+   ```
+   The production server serves both frontend and backend on port 3001.
+
+2. **Create a tunnel to port 3001:**
+   ```bash
+   npx localtunnel --port 3001
+   ```
+   Or use ngrok:
+   ```bash
+   ngrok http 3001
+   ```
+
+3. **Share the tunnel URL** - The app will work immediately because both frontend and backend are served from the same URL.
+
+### Option 2: Runtime config (public/config.json)
+
+Set `backendUrl` in `public/config.json` to your backend's public URL. The app loads this when the page opens, so you can change it without rebuilding. Example:
 ```json
-{ "backendUrl": "https://my-backend.loca.lt" }
+{ "backendUrl": "https://my-backend.railway.app" }
 ```
 
-### Option 2: Using Environment Variables (Build time)
+### Option 3: Using Environment Variables (Build time)
 
 1. **Create a `.env` file in the project root:**
    ```env
@@ -73,35 +89,7 @@ Set `backendUrl` in `public/config.json` to your backend’s public URL. The app
    - AWS
    - Any Node.js hosting
 
-### Option 2: Using Tunneling (Quick Testing)
-
-1. **Start backend server:**
-   ```bash
-   npm run server
-   ```
-
-2. **Create tunnel for backend:**
-   ```bash
-   npm run tunnel:backend
-   ```
-   This will give you a public URL like: `https://xxxxx.loca.lt`
-
-3. **Set the environment variable:**
-   ```env
-   VITE_SERVER_URL=https://xxxxx.loca.lt
-   ```
-
-4. **Start frontend:**
-   ```bash
-   npm run dev
-   ```
-
-5. **Create tunnel for frontend (optional):**
-   ```bash
-   npm run tunnel:frontend
-   ```
-
-### Option 3: Frontend on Netlify (or Vercel, GitHub Pages)
+### Option 4: Frontend on Netlify/Vercel + Backend on Railway
 
 Netlify and similar hosts **only serve static files**. They do not run the Node.js backend. So:
 
@@ -117,11 +105,10 @@ Netlify and similar hosts **only serve static files**. They do not run the Node.
    ```json
    { "backendUrl": "https://your-app.railway.app" }
    ```
-   (Use your real backend URL; no `:3001` if the host uses standard HTTPS.)
 
 4. **Deploy the frontend** to Netlify (or redeploy so the updated `config.json` is live). The app will load that URL and connect to your backend.
 
-### Option 4: Same Domain Deployment
+### Option 5: Same Domain Deployment
 
 If you deploy both frontend and backend on the same domain:
 
@@ -133,17 +120,14 @@ If you deploy both frontend and backend on the same domain:
    VITE_SERVER_URL=https://api.yourdomain.com
    ```
 
-### Option 5: Port Forwarding (Local Network)
+### Option 6: Port Forwarding (Local Network)
 
-1. **Configure your router to forward ports:**
-   - Port 5173 → Your computer (frontend)
-   - Port 3001 → Your computer (backend)
+1. **Configure your router to forward port 3001** to your computer
 
 2. **Get your public IP address**
 
 3. **Access from anywhere:**
-   - Frontend: `http://YOUR_PUBLIC_IP:5173`
-   - Backend will be automatically detected
+   - `http://YOUR_PUBLIC_IP:3001` (production server serves both frontend and backend)
 
 ## Environment Variables
 
@@ -194,7 +178,7 @@ NODE_ENV=production
    - Backend should have `cors()` enabled (already configured)
 
 3. **Check firewall:**
-   - Ensure ports 3001 and 5173 are open
+   - Ensure port 3001 is open
 
 4. **Check environment variables:**
    - Make sure `VITE_SERVER_URL` is set correctly
@@ -212,6 +196,11 @@ NODE_ENV=production
    - Check browser console for errors
    - Ensure backend CORS allows your frontend domain
 
+3. **Tunnel not working:**
+   - Make sure you're running the **production server** (`npm run start:prod`) which serves both frontend and backend
+   - Create only ONE tunnel to port 3001
+   - The app will auto-detect the tunnel environment
+
 ## Security Notes
 
 ⚠️ **Important:** The current setup allows file system access. For production:
@@ -224,9 +213,9 @@ NODE_ENV=production
 
 ## Production Checklist
 
-- [ ] Set `VITE_SERVER_URL` environment variable
+- [ ] Set `VITE_SERVER_URL` environment variable (or use config.json)
 - [ ] Deploy backend to cloud service
-- [ ] Deploy frontend to static hosting
+- [ ] Deploy frontend to static hosting (or use production server)
 - [ ] Enable HTTPS
 - [ ] Configure CORS properly
 - [ ] Add authentication (if needed)

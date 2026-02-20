@@ -1,4 +1,4 @@
 {
   "backendUrl": "",
-  "_comment": "Leave empty: works locally (backend at hostname:3001) and online (browser mode on Netlify/Vercel). Set backendUrl only if you deploy the Node server elsewhere (e.g. Railway)."
+  "_comment": "Leave empty for auto-detect. Works locally (backend at hostname:3001), via tunnel (same URL for both), and on static hosts (browser mode). Set backendUrl only if frontend and backend are on different servers."
 }
