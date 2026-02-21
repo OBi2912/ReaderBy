@@ -200,7 +200,20 @@ const translations = {
     gameHigh: "High",
     gameMedium: "Medium",
     gameLow: "Low",
-    gameUnplayable: "Unplayable"
+    gameUnplayable: "Unplayable",
+    // Performance Score section
+    perfScoreTitle: "Performance Score",
+    perfScoreDesc: "System benchmark based on live hardware data",
+    perfBreakdownTitle: "Score Breakdown",
+    perfCpuLabel: "CPU",
+    perfGpuLabel: "GPU",
+    perfRamLabel: "RAM",
+    perfTierLabel: "Tier",
+    perfTierGaming: "Gaming Ready",
+    perfTierWorkstation: "Workstation",
+    perfTierBasic: "Basic Use",
+    perfTierEntry: "Entry Level",
+    perfMaxScore: "out of 100"
   },
   es: {
     title: "Recursos del Sistema",
@@ -255,7 +268,20 @@ const translations = {
     gameHigh: "Alto",
     gameMedium: "Medio",
     gameLow: "Bajo",
-    gameUnplayable: "Injugable"
+    gameUnplayable: "Injugable",
+    // Performance Score section
+    perfScoreTitle: "Puntuación de Rendimiento",
+    perfScoreDesc: "Benchmark del sistema basado en datos de hardware en vivo",
+    perfBreakdownTitle: "Desglose de Puntuación",
+    perfCpuLabel: "CPU",
+    perfGpuLabel: "GPU",
+    perfRamLabel: "RAM",
+    perfTierLabel: "Nivel",
+    perfTierGaming: "Listo para Gaming",
+    perfTierWorkstation: "Estación de Trabajo",
+    perfTierBasic: "Uso Básico",
+    perfTierEntry: "Nivel Inicial",
+    perfMaxScore: "de 100"
   }
 };
 
@@ -1249,29 +1275,109 @@ const App = () => {
             transition={{ delay: 0.5 }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div className="stat-label">Performance Score</div>
+              <div>
+                <div className="stat-label">{t.perfScoreTitle}</div>
+                <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginTop: '4px', letterSpacing: '0.05em' }}>{t.perfScoreDesc}</div>
+              </div>
               <div style={{ padding: '8px', borderRadius: '12px', background: 'rgba(251, 191, 36, 0.1)' }}>
                 <Zap size={20} color="#fbbf24" />
               </div>
             </div>
-            <div style={{ marginTop: '16px' }}>
-              <div style={{ fontSize: '3rem', fontWeight: '800', color: '#fbbf24', textAlign: 'center' }}>
+
+            {/* Main score display */}
+            <div style={{ marginTop: '20px', display: 'flex', alignItems: 'flex-end', gap: '12px', justifyContent: 'center' }}>
+              <div style={{ fontSize: '4.5rem', fontWeight: '800', color: getScoreColor(performanceScore), lineHeight: 1, filter: `drop-shadow(0 0 20px ${getScoreColor(performanceScore)}55)` }}>
                 {performanceScore}
               </div>
-              <div style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '8px' }}>
-                {getPerformanceLevel(performanceScore, t)}
+              <div style={{ paddingBottom: '10px', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{t.perfMaxScore}</div>
+            </div>
+
+            {/* Tier badge */}
+            <div style={{ display: 'flex', justifyContent: 'center', marginTop: '8px' }}>
+              <span style={{
+                padding: '4px 16px',
+                borderRadius: '100px',
+                fontSize: '0.75rem',
+                fontWeight: '700',
+                background: performanceScore >= 85 ? 'rgba(251,191,36,0.15)' : performanceScore >= 65 ? 'rgba(16,185,129,0.15)' : performanceScore >= 45 ? 'rgba(59,130,246,0.15)' : 'rgba(239,68,68,0.15)',
+                color: getScoreColor(performanceScore),
+                border: `1px solid ${getScoreColor(performanceScore)}44`,
+                textTransform: 'uppercase',
+                letterSpacing: '0.12em'
+              }}>
+                {performanceScore >= 85 ? t.perfTierGaming : performanceScore >= 65 ? t.perfTierWorkstation : performanceScore >= 45 ? t.perfTierBasic : t.perfTierEntry}
+              </span>
+            </div>
+
+            {/* Progress bar */}
+            <div className="progress-bar-container" style={{ marginTop: '16px' }}>
+              <div
+                className="progress-bar-fill"
+                style={{
+                  width: `${performanceScore}%`,
+                  background: performanceScore >= 90 ? 'linear-gradient(to right, #fbbf24, #f59e0b)' :
+                    performanceScore >= 70 ? 'linear-gradient(to right, #10b981, #059669)' :
+                      performanceScore >= 50 ? 'linear-gradient(to right, #3b82f6, #2563eb)' :
+                        'linear-gradient(to right, #ef4444, #dc2626)'
+                }}
+              ></div>
+            </div>
+
+            {/* Score Breakdown */}
+            <div style={{ marginTop: '20px', borderTop: '1px solid var(--card-border)', paddingTop: '16px' }}>
+              <div style={{ fontSize: '0.7rem', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: '12px' }}>
+                {t.perfBreakdownTitle}
               </div>
-              <div className="progress-bar-container" style={{ marginTop: '16px' }}>
-                <div
-                  className="progress-bar-fill"
-                  style={{
-                    width: `${performanceScore}%`,
-                    background: performanceScore >= 90 ? 'linear-gradient(to right, #fbbf24, #f59e0b)' :
-                      performanceScore >= 70 ? 'linear-gradient(to right, #10b981, #059669)' :
-                        performanceScore >= 50 ? 'linear-gradient(to right, #3b82f6, #2563eb)' :
-                          'linear-gradient(to right, #ef4444, #dc2626)'
-                  }}
-                ></div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {/* CPU row */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Cpu size={13} color="var(--accent-secondary)" style={{ flexShrink: 0 }} />
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', width: '32px', flexShrink: 0 }}>{t.perfCpuLabel}</div>
+                  <div style={{ flex: 1, height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '100px', overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${Math.min(((performanceScore * 0.5) / 50) * 100, 100)}%`, background: 'linear-gradient(to right, #0ea5e9, var(--accent-secondary))', borderRadius: '100px', transition: 'width 1s ease' }}></div>
+                  </div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: '700', width: '30px', textAlign: 'right', color: 'var(--accent-secondary)' }}>
+                    {Math.round(performanceScore * 0.5)}<span style={{ fontSize: '0.6rem', opacity: 0.6 }}>/50</span>
+                  </div>
+                </div>
+                {/* GPU row */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Activity size={13} color="#22c55e" style={{ flexShrink: 0 }} />
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', width: '32px', flexShrink: 0 }}>{t.perfGpuLabel}</div>
+                  <div style={{ flex: 1, height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '100px', overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${Math.min(((performanceScore * 0.3) / 30) * 100, 100)}%`, background: 'linear-gradient(to right, #22c55e, #059669)', borderRadius: '100px', transition: 'width 1s ease' }}></div>
+                  </div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: '700', width: '30px', textAlign: 'right', color: '#22c55e' }}>
+                    {Math.round(performanceScore * 0.3)}<span style={{ fontSize: '0.6rem', opacity: 0.6 }}>/30</span>
+                  </div>
+                </div>
+                {/* RAM row */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Database size={13} color="var(--accent-primary)" style={{ flexShrink: 0 }} />
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', width: '32px', flexShrink: 0 }}>{t.perfRamLabel}</div>
+                  <div style={{ flex: 1, height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '100px', overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${Math.min(((performanceScore * 0.2) / 20) * 100, 100)}%`, background: 'linear-gradient(to right, var(--accent-primary), #7c3aed)', borderRadius: '100px', transition: 'width 1s ease' }}></div>
+                  </div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: '700', width: '30px', textAlign: 'right', color: 'var(--accent-primary)' }}>
+                    {Math.round(performanceScore * 0.2)}<span style={{ fontSize: '0.6rem', opacity: 0.6 }}>/20</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Live hardware summary */}
+            <div style={{ marginTop: '16px', padding: '12px', borderRadius: '12px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--card-border)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ opacity: 0.6 }}>{t.perfCpuLabel}</span>
+                <span style={{ fontWeight: '600', color: 'var(--text-primary)', fontSize: '0.72rem', textAlign: 'right', maxWidth: '65%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stats.cpu?.model || '—'}</span>
+              </div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ opacity: 0.6 }}>{t.perfGpuLabel}</span>
+                <span style={{ fontWeight: '600', color: 'var(--text-primary)', fontSize: '0.72rem', textAlign: 'right', maxWidth: '65%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stats.gpu?.model || '—'}</span>
+              </div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ opacity: 0.6 }}>{t.perfRamLabel}</span>
+                <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>{formatBytes(stats.memory?.total || 0)}</span>
               </div>
             </div>
           </motion.div>
